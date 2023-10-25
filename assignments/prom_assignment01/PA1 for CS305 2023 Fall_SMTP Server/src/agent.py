@@ -69,6 +69,9 @@ def pop():
                 print(conn.rset())
             elif cmd == 'noop':
                 print(conn.noop())
+            elif cmd == 'help':
+                msg = list(map(str, conn.retr(1)[1]))
+                print('\r\n'.join(msg))
             elif cmd == 'quit':
                 print(conn.quit())
                 break
