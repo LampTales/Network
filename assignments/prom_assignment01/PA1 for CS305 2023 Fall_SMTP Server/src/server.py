@@ -154,12 +154,12 @@ class POP3Server(BaseRequestHandler):
                 conn.sendall(f'+OK {mess_num} {mess_totalbytes}\r\n'.encode())
 
             elif command == 'LIST':
-                len_list = []
+                mess_num = len(mess_list)
                 # TODO: figure out what should I send
-                for mess in mess_list:
-                    len_list.append(len(mess))
-                for i in range(len(len_list)):
-                    conn.sendall(f'{i + 1} {len_list[i]}\r\n'.encode())
+                conn.sendall(f'+OK {mess_num} messages\r\n'.encode())
+                for i in range(mess_num):
+                    conn.sendall(f'{i + 1} {len(mess_list[i])}\r\n'.encode())
+                conn.sendall(b'.\r\n') 
 
             elif command == 'RETR':
                 if len(message) < 2:
@@ -172,7 +172,6 @@ class POP3Server(BaseRequestHandler):
                     conn.sendall(b'+OK\r\n')
                     # TODO: figure out what if it is right
                     conn.sendall(mess_list[mess_num - 1])
-                    conn.sendall(b'\r\n.\r\n')
 
             elif command == 'DELE':
                 if len(message) < 2:
@@ -210,6 +209,7 @@ class SMTPServer(BaseRequestHandler):
     def handle(self):
         conn = self.request
         # handle connection
+        from_ip = None
         conn.sendall(b'220 SMTP server ready\r\n')
         message = get_message(conn, to_print=DEBUG)
         if message[0].upper() == 'HELO':
@@ -217,6 +217,8 @@ class SMTPServer(BaseRequestHandler):
         elif message[0].upper() == 'EHLO':
             if len(message) >= 2:
                 # TODO: I should sub the ip out
+                if message[1].startswith('['):
+                    from_ip = message[1][1:len(message[1]) - 1]
                 conn.sendall(b'250 OK\r\n')
             else:
                 conn.sendall(b'500 Error: bad syntax\r\n')
@@ -225,8 +227,6 @@ class SMTPServer(BaseRequestHandler):
             conn.sendall(b'500 Error: bad syntax\r\n')
             return
 
-        # verify user and password
-        # TODO: figure out what should I do
 
         # receive mail
         send_list = []
@@ -239,22 +239,22 @@ class SMTPServer(BaseRequestHandler):
                 continue
             command = message[0].upper()
 
-            # TODO: figure out what should I do
             if command == 'QUIT':
                 conn.sendall(b'221 Bye\r\n')
                 for src, dst, data in send_list:
                     mail_domain = dst.split('@')[-1]
                     server_domain = fdns_query(mail_domain, 'MX')
+                    to_ip = fdns_query(server_domain, 'A')
                     to_port = int(fdns_query(server_domain, 'P'))
-                    # TODO: What should be the judgement condition?
-                    if to_port == SMTP_PORT:
+                    if to_ip == 'localhost' and to_port == SMTP_PORT:
                         if DEBUG:
-                            print("send to myself")
+                            print("send to the server itself")
                         MAILBOXES[dst].append(data)
                     else:
                         if DEBUG:
                             print("send to other server")
-                        send_mail(to_port, src, dst, data)
+                            print(f"to_ip: {to_ip}, to_port: {to_port}")
+                        send_mail(to_ip, to_port, src, dst, data)
                 break
 
             # receive mail
@@ -266,7 +266,7 @@ class SMTPServer(BaseRequestHandler):
                     state = WAITING_RCPT
                     conn.sendall(b'250 OK\r\n')
                 else:
-                    conn.sendall(b'500 Error: bad syntax\r\n')
+                    conn.sendall(b'500 Error: you should send a legal MAIL command\r\n')
                     continue
 
             elif state == WAITING_RCPT:
@@ -274,10 +274,18 @@ class SMTPServer(BaseRequestHandler):
                     dst = message[1][4:len(message[1]) - 1]
                     if DEBUG:
                         print("dst: ", dst)
+
+                    # verify user and password
+                    # TODO: figure out what should I do
+                    if src not in ACCOUNTS and dst not in ACCOUNTS:
+                        conn.sendall(b'550 Error: invaild <src, dst> group\r\n')
+                        state = WAITING_MAIL
+                        continue
+
                     state = WAITING_DATA
                     conn.sendall(b'250 OK\r\n')
                 else:
-                    conn.sendall(b'500 Error: bad syntax\r\n')
+                    conn.sendall(b'500 Error: you should send a legal RCPT command\r\n')
                     continue
 
             elif state == WAITING_DATA:
@@ -286,8 +294,8 @@ class SMTPServer(BaseRequestHandler):
                     data = conn.recv(1024)
                     while not data.decode().endswith('\r\n.\r\n'):
                         data += conn.recv(1024)
-                    print("data: ", data)
-                    print("decode data: ", data.decode())
+                    if DEBUG:
+                        print("decode data: ", data.decode())
                     conn.sendall(b'250 OK\r\n')
                     send_list.append((src, dst, data))
                     state = WAITING_MAIL
@@ -302,26 +310,24 @@ class SMTPServer(BaseRequestHandler):
 
 
 
-
-
-
-
 # TODO: figure out whether it works or not
-def send_mail(to_port, src, dst, data):
+def send_mail(to_ip, to_port, src, dst, data):
     conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    conn.connect(('localhost', to_port))
-    conn.sendall(f'HELO {src}\r\n'.encode())
-    conn.recv(1024)
+    conn.connect((to_ip, to_port))
+    if DEBUG:
+        print(f"start connect with [{to_ip} {to_port}]")
+    conn.sendall(f'HELO\r\n'.encode())
+    get_message(conn, to_print=DEBUG, no_substr=True)
     conn.sendall(f'MAIL FROM:<{src}>\r\n'.encode())
-    conn.recv(1024)
+    get_message(conn, to_print=DEBUG, no_substr=True)
     conn.sendall(f'RCPT TO:<{dst}>\r\n'.encode())
-    conn.recv(1024)
+    get_message(conn, to_print=DEBUG, no_substr=True)
     conn.sendall(b'DATA\r\n')
-    conn.recv(1024)
+    get_message(conn, to_print=DEBUG, no_substr=True)
     conn.sendall(data)
-    conn.recv(1024)
+    get_message(conn, to_print=DEBUG, no_substr=True)
     conn.sendall(b'QUIT\r\n')
-    conn.recv(1024)
+    get_message(conn, to_print=DEBUG, no_substr=True)
     conn.close()
 
 
