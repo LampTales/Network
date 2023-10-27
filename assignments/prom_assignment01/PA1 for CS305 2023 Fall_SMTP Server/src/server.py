@@ -244,7 +244,10 @@ class SMTPServer(BaseRequestHandler):
                 for src, dst, data in send_list:
                     mail_domain = dst.split('@')[-1]
                     server_domain = fdns_query(mail_domain, 'MX')
-                    to_ip = fdns_query(server_domain, 'A')
+                    if 'A' not in FDNS or server_domain not in FDNS['A']:
+                        to_ip = 'localhost'
+                    else:
+                        to_ip = fdns_query(server_domain, 'A')
                     to_port = int(fdns_query(server_domain, 'P'))
                     if to_ip == 'localhost' and to_port == SMTP_PORT:
                         if DEBUG:
