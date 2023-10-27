@@ -6,9 +6,9 @@ from queue import Queue
 import socket
 from socketserver import ThreadingTCPServer, BaseRequestHandler
 from threading import Thread
+import logging
 
 import tomli
-
 
 def student_id() -> int:
     return 12111519
@@ -20,6 +20,11 @@ parser.add_argument('--smtp', '-s', type=int)
 parser.add_argument('--pop', '-p', type=int)
 
 args = parser.parse_args()
+
+LOG = False
+if LOG:
+    log_file = f'{args.name}.log'
+    logging.basicConfig(filename=log_file, level=logging.DEBUG, format='%(asctime)s %(message)s', datefmt='%m/%d/%Y %I:%M:%S %p')
 
 with open('data/config.toml', 'rb') as f:
     _config = tomli.load(f)
@@ -53,6 +58,7 @@ def get_message(conn, to_print=False, no_decode=False, no_substr=False, no_split
             print(message.decode())
         return message
     message = message.decode()
+    logging.info(message.rstrip('\r\n'))
     if no_substr:
         if to_print:
             print(message)
@@ -65,7 +71,7 @@ def get_message(conn, to_print=False, no_decode=False, no_substr=False, no_split
     if to_print_ori and to_print:
         print(message)
     message = message.split(' ')
-    if to_print:
+    if to_print and not to_print_ori:
         print_message(message)
     return message
 
@@ -137,9 +143,7 @@ class POP3Server(BaseRequestHandler):
                 conn.sendall(pop_error_report(INVALID_COMMAND))
 
         # handle commands
-        total_len = len(MAILBOXES[user])
         delete_list = []
-        left_list = [i for i in range(total_len)]
         mess_list = MAILBOXES[user]
         while True:
             message = get_message(conn, to_print=DEBUG)
@@ -148,56 +152,50 @@ class POP3Server(BaseRequestHandler):
 
             command = message[0].upper()
             if command == 'STAT':
+                mess_num = len(mess_list)
                 mess_totalbytes = 0
-                for i in left_list:
-                    mess_totalbytes -= len(mess_list[i])
-                conn.sendall(f'+OK {len(left_list)} {mess_totalbytes}\r\n'.encode())
+                for mess in mess_list:
+                    # TODO: check if this is correct
+                    mess_totalbytes += len(mess)
+                conn.sendall(f'+OK {mess_num} {mess_totalbytes}\r\n'.encode())
 
             elif command == 'LIST':
+                mess_num = len(mess_list)
                 # TODO: figure out what should I send
-                conn.sendall(f'+OK {len(left_list)} messages\r\n'.encode())
-                for i in left_list:
+                conn.sendall(f'+OK {mess_num} messages\r\n'.encode())
+                for i in range(mess_num):
                     conn.sendall(f'{i + 1} {len(mess_list[i])}\r\n'.encode())
-                conn.sendall(b'.\r\n')
+                conn.sendall(b'.\r\n') 
 
             elif command == 'RETR':
                 if len(message) < 2:
                     conn.sendall(pop_error_report(INVALID_COMMAND))
                     continue
-                mess_num = int(message[1]) - 1
-                if mess_num == -1:
-                    send_help(conn)
-                    continue
-                if mess_num not in left_list:
+                mess_num = int(message[1])
+                if mess_num > len(mess_list) or mess_num < 1:
                     conn.sendall(pop_error_report(INVALID_ARGUMENT, 'Message not found'))
-                    continue
                 else:
                     conn.sendall(b'+OK\r\n')
-                    conn.sendall(mess_list[mess_num])
+                    # TODO: figure out what if it is right
+                    conn.sendall(mess_list[mess_num - 1])
 
             elif command == 'DELE':
                 if len(message) < 2:
                     conn.sendall(pop_error_report(INVALID_COMMAND))
                     continue
-                del_num = int(message[1]) - 1
-                if del_num not in left_list:
+                del_num = int(message[1])
+                if del_num > len(mess_list) or del_num < 1:
                     conn.sendall(pop_error_report(INVALID_ARGUMENT, 'Message not found'))
-                    continue
                 else:
-                    delete_list.append(del_num)
-                    left_list.remove(del_num)
+                    delete_list.append(del_num - 1)
                     conn.sendall(b'+OK\r\n')
 
             elif command == 'RSET':
                 delete_list = []
-                left_list = [i for i in range(total_len)]
                 conn.sendall(b'+OK\r\n')
 
             elif command == 'NOOP':
                 conn.sendall(b'+OK\r\n')
-
-            elif command == 'HELP':
-                send_help(conn)
 
             elif command == 'QUIT':
                 delete_list.sort(reverse=True)
@@ -213,7 +211,6 @@ WAITING_MAIL = 0
 WAITING_RCPT = 1
 WAITING_DATA = 2
 
-
 class SMTPServer(BaseRequestHandler):
     def handle(self):
         conn = self.request
@@ -225,7 +222,6 @@ class SMTPServer(BaseRequestHandler):
             conn.sendall(b'250 OK\r\n')
         elif message[0].upper() == 'EHLO':
             if len(message) >= 2:
-                # TODO: I should sub the ip out
                 if message[1].startswith('['):
                     from_ip = message[1][1:len(message[1]) - 1]
                 conn.sendall(b'250 OK\r\n')
@@ -235,6 +231,7 @@ class SMTPServer(BaseRequestHandler):
         else:
             conn.sendall(b'500 Error: bad syntax\r\n')
             return
+
 
         # receive mail
         send_list = []
@@ -274,6 +271,11 @@ class SMTPServer(BaseRequestHandler):
                     src = message[1][6:len(message[1]) - 1]
                     if DEBUG:
                         print("src: ", src)
+                    from_ip, from_port = analyze_addr(src)
+                    if from_ip == 'localhost' and from_port == SMTP_PORT and src not in ACCOUNTS:
+                        conn.sendall(b'500 Error: no such account\r\n')
+                        continue
+                        
                     state = WAITING_RCPT
                     conn.sendall(b'250 OK\r\n')
                 else:
@@ -289,7 +291,7 @@ class SMTPServer(BaseRequestHandler):
                     # verify user and password
                     # TODO: figure out what should I do
                     if src not in ACCOUNTS and dst not in ACCOUNTS:
-                        conn.sendall(b'550 Error: invaild <src, dst> group\r\n')
+                        conn.sendall(b'500 Error: invaild <src, dst> group\r\n')
                         state = WAITING_MAIL
                         continue
 
@@ -320,10 +322,12 @@ class SMTPServer(BaseRequestHandler):
                 continue
 
 
+
 # TODO: figure out whether it works or not
 def send_mail(to_ip, to_port, src, dst, data):
     conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     conn.connect((to_ip, to_port))
+    get_message(conn, to_print=DEBUG, no_substr=True)
     if DEBUG:
         print(f"start connect with [{to_ip} {to_port}]")
     conn.sendall(f'HELO\r\n'.encode())
@@ -331,7 +335,14 @@ def send_mail(to_ip, to_port, src, dst, data):
     conn.sendall(f'MAIL FROM:<{src}>\r\n'.encode())
     get_message(conn, to_print=DEBUG, no_substr=True)
     conn.sendall(f'RCPT TO:<{dst}>\r\n'.encode())
-    get_message(conn, to_print=DEBUG, no_substr=True)
+    if DEBUG:
+        print("<usr, dst> validation at the other server")
+    message = get_message(conn, to_print=DEBUG, to_print_ori=True)
+    if message[0] != '250':
+        back_mail(src, dst, data)
+        conn.sendall(b'QUIT\r\n')
+        conn.close()
+        return
     conn.sendall(b'DATA\r\n')
     get_message(conn, to_print=DEBUG, no_substr=True)
     conn.sendall(data)
@@ -341,17 +352,22 @@ def send_mail(to_ip, to_port, src, dst, data):
     conn.close()
 
 
-def send_help(conn):
-    conn.sendall(b'+OK\r\n')
-    conn.sendall('STAT: get the number of messages and the total bytes\r\n'.encode())
-    conn.sendall('LIST: get the number and size of each message\r\n'.encode())
-    conn.sendall('RETR: get the message with the given number\r\n'.encode())
-    conn.sendall('DELE: delete the message with the given number\r\n'.encode())
-    conn.sendall('RSET: reset the delete list\r\n'.encode())
-    conn.sendall('NOOP: return a positive response\r\n'.encode())
-    conn.sendall('QUIT: quit the connection\r\n'.encode())
-    conn.sendall('HELP: get the help message (RETR 0 can also get help)\r\n'.encode())
-    conn.sendall(b'\r\n.\r\n')
+def analyze_addr(addr):
+    smtp_domain = addr.split('@')[-1]
+    mail_domain = fdns_query(smtp_domain, 'MX')
+    if 'A' not in FDNS or domain not in FDNS['A']:
+        ip = 'localhost'
+    else:
+        ip = fdns_query(mail_domain, 'A')
+    port = int(fdns_query(mail_domain, 'P'))
+    return ip, port
+
+
+def back_mail(src, dst, data):
+    if src in MAILBOXES:
+        if DEBUG:
+            print(f'back mail from {src} to {dst}')
+        MAILBOXES[src].append(data)
 
 
 if __name__ == '__main__':
