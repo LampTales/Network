@@ -287,7 +287,7 @@ class SMTPServer(BaseRequestHandler):
 
                     # verify user and password
                     if src not in ACCOUNTS and dst not in ACCOUNTS:
-                        conn.sendall(b'500 Error: invalid <src, dst> group\r\n')
+                        conn.sendall(b'500 Error: unknown domain\r\n')
                         state = WAITING_MAIL
                         continue
 
