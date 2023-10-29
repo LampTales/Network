@@ -155,13 +155,11 @@ class POP3Server(BaseRequestHandler):
                 mess_num = len(mess_list)
                 mess_totalbytes = 0
                 for mess in mess_list:
-                    # TODO: check if this is correct
                     mess_totalbytes += len(mess)
                 conn.sendall(f'+OK {mess_num} {mess_totalbytes}\r\n'.encode())
 
             elif command == 'LIST':
                 mess_num = len(mess_list)
-                # TODO: figure out what should I send
                 conn.sendall(f'+OK {mess_num} messages\r\n'.encode())
                 for i in range(mess_num):
                     conn.sendall(f'{i + 1} {len(mess_list[i])}\r\n'.encode())
@@ -176,7 +174,6 @@ class POP3Server(BaseRequestHandler):
                     conn.sendall(pop_error_report(INVALID_ARGUMENT, 'Message not found'))
                 else:
                     conn.sendall(b'+OK\r\n')
-                    # TODO: figure out what if it is right
                     conn.sendall(mess_list[mess_num - 1])
 
             elif command == 'DELE':
@@ -289,9 +286,8 @@ class SMTPServer(BaseRequestHandler):
                         print("dst: ", dst)
 
                     # verify user and password
-                    # TODO: figure out what should I do
                     if src not in ACCOUNTS and dst not in ACCOUNTS:
-                        conn.sendall(b'500 Error: invaild <src, dst> group\r\n')
+                        conn.sendall(b'500 Error: invalid <src, dst> group\r\n')
                         state = WAITING_MAIL
                         continue
 
@@ -323,7 +319,6 @@ class SMTPServer(BaseRequestHandler):
 
 
 
-# TODO: figure out whether it works or not
 def send_mail(to_ip, to_port, src, dst, data):
     conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     conn.connect((to_ip, to_port))
@@ -355,7 +350,7 @@ def send_mail(to_ip, to_port, src, dst, data):
 def analyze_addr(addr):
     smtp_domain = addr.split('@')[-1]
     mail_domain = fdns_query(smtp_domain, 'MX')
-    if 'A' not in FDNS or domain not in FDNS['A']:
+    if 'A' not in FDNS or mail_domain not in FDNS['A']:
         ip = 'localhost'
     else:
         ip = fdns_query(mail_domain, 'A')
