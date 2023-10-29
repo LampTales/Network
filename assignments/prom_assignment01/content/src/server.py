@@ -143,7 +143,9 @@ class POP3Server(BaseRequestHandler):
                 conn.sendall(pop_error_report(INVALID_COMMAND))
 
         # handle commands
+        total_len = len(MAILBOXES[user])
         delete_list = []
+        left_list = [i for i in range(total_len)]
         mess_list = MAILBOXES[user]
         while True:
             message = get_message(conn, to_print=DEBUG)
@@ -152,47 +154,55 @@ class POP3Server(BaseRequestHandler):
 
             command = message[0].upper()
             if command == 'STAT':
-                mess_num = len(mess_list)
                 mess_totalbytes = 0
-                for mess in mess_list:
-                    mess_totalbytes += len(mess)
-                conn.sendall(f'+OK {mess_num} {mess_totalbytes}\r\n'.encode())
+                for i in left_list:
+                    mess_totalbytes -= len(mess_list[i])
+                conn.sendall(f'+OK {len(left_list)} {mess_totalbytes}\r\n'.encode())
 
             elif command == 'LIST':
-                mess_num = len(mess_list)
-                conn.sendall(f'+OK {mess_num} messages\r\n'.encode())
-                for i in range(mess_num):
+                conn.sendall(f'+OK {len(left_list)} messages\r\n'.encode())
+                for i in left_list:
                     conn.sendall(f'{i + 1} {len(mess_list[i])}\r\n'.encode())
-                conn.sendall(b'.\r\n') 
+                conn.sendall(b'.\r\n')
 
             elif command == 'RETR':
                 if len(message) < 2:
                     conn.sendall(pop_error_report(INVALID_COMMAND))
                     continue
-                mess_num = int(message[1])
-                if mess_num > len(mess_list) or mess_num < 1:
+                mess_num = int(message[1]) - 1
+                if mess_num == -1:
+                    send_help(conn)
+                    continue
+                if mess_num not in left_list:
                     conn.sendall(pop_error_report(INVALID_ARGUMENT, 'Message not found'))
+                    continue
                 else:
                     conn.sendall(b'+OK\r\n')
-                    conn.sendall(mess_list[mess_num - 1])
+                    conn.sendall(mess_list[mess_num])
 
             elif command == 'DELE':
                 if len(message) < 2:
                     conn.sendall(pop_error_report(INVALID_COMMAND))
                     continue
-                del_num = int(message[1])
-                if del_num > len(mess_list) or del_num < 1:
+                del_num = int(message[1]) - 1
+                if del_num not in left_list:
                     conn.sendall(pop_error_report(INVALID_ARGUMENT, 'Message not found'))
+                    continue
                 else:
-                    delete_list.append(del_num - 1)
+                    delete_list.append(del_num)
+                    left_list.remove(del_num)
                     conn.sendall(b'+OK\r\n')
 
             elif command == 'RSET':
                 delete_list = []
+                left_list = [i for i in range(total_len)]
                 conn.sendall(b'+OK\r\n')
 
             elif command == 'NOOP':
                 conn.sendall(b'+OK\r\n')
+
+            elif command == 'HELP':
+                send_help(conn)
 
             elif command == 'QUIT':
                 delete_list.sort(reverse=True)
@@ -207,6 +217,7 @@ class POP3Server(BaseRequestHandler):
 WAITING_MAIL = 0
 WAITING_RCPT = 1
 WAITING_DATA = 2
+
 
 class SMTPServer(BaseRequestHandler):
     def handle(self):
@@ -229,7 +240,6 @@ class SMTPServer(BaseRequestHandler):
             conn.sendall(b'500 Error: bad syntax\r\n')
             return
 
-
         # receive mail
         send_list = []
         state = WAITING_MAIL
@@ -246,7 +256,7 @@ class SMTPServer(BaseRequestHandler):
                 for src, dst, data in send_list:
                     mail_domain = dst.split('@')[-1]
                     server_domain = fdns_query(mail_domain, 'MX')
-                    if 'A' not in FDNS or server_domain not in FDNS['A']:
+                    if 'A' not in FDNS or (server_domain+'.') not in FDNS['A']:
                         to_ip = 'localhost'
                     else:
                         to_ip = fdns_query(server_domain, 'A')
@@ -287,6 +297,11 @@ class SMTPServer(BaseRequestHandler):
 
                     # verify user and password
                     if src not in ACCOUNTS and dst not in ACCOUNTS:
+                        conn.sendall(b'500 Error: wrong message\r\n')
+                        state = WAITING_MAIL
+                        continue
+                    temp_domain = dst.split('@')[-1] + '.'
+                    if temp_domain not in FDNS['MX']:
                         conn.sendall(b'500 Error: unknown domain\r\n')
                         state = WAITING_MAIL
                         continue
@@ -350,7 +365,7 @@ def send_mail(to_ip, to_port, src, dst, data):
 def analyze_addr(addr):
     smtp_domain = addr.split('@')[-1]
     mail_domain = fdns_query(smtp_domain, 'MX')
-    if 'A' not in FDNS or mail_domain not in FDNS['A']:
+    if 'A' not in FDNS or (mail_domain+'.') not in FDNS['A']:
         ip = 'localhost'
     else:
         ip = fdns_query(mail_domain, 'A')
@@ -363,6 +378,19 @@ def back_mail(src, dst, data):
         if DEBUG:
             print(f'back mail from {src} to {dst}')
         MAILBOXES[src].append(data)
+
+
+def send_help(conn):
+    conn.sendall(b'+OK\r\n')
+    conn.sendall('STAT: get the number of messages and the total bytes\r\n'.encode())
+    conn.sendall('LIST: get the number and size of each message\r\n'.encode())
+    conn.sendall('RETR <num>: get the message with the given number\r\n'.encode())
+    conn.sendall('DELE <num>: delete the message with the given number\r\n'.encode())
+    conn.sendall('RSET: reset the delete list\r\n'.encode())
+    conn.sendall('NOOP: return a positive response\r\n'.encode())
+    conn.sendall('QUIT: quit the connection\r\n'.encode())
+    conn.sendall('HELP: get the help message (RETR 0 can also get help)\r\n'.encode())
+    conn.sendall(b'.\r\n')
 
 
 if __name__ == '__main__':
