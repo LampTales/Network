@@ -49,11 +49,77 @@ def pop_error_report(error_code, msg=None):
     return error_msg.encode()
 ```
 
+And in the POP server, the error can be reported in this way:
+```python
+if command == 'DELE':
+	if len(message) < 2:
+		conn.sendall(pop_error_report(INVALID_COMMAND))
+		continue
+	del_num = int(message[1]) - 1
+	if del_num not in left_list:
+		conn.sendall(pop_error_report(INVALID_ARGUMENT, 'Message not found'))
+		continue
+	else:
+		delete_list.append(del_num)
+		left_list.remove(del_num)
+		conn.sendall(b'+OK\r\n')
+```
+
 Here is the test for some of the errors:
 
 <img src="C:\Users\ASUS\Desktop\materials\Network\assignments\png_save\pop_err.png" alt="pop_err" style="zoom:67%;" />
 
-In SMTP, I implement the types of error reporting including the syntax of the command, the existence of the user, and the existence of the receiver's domain server. Here is the test for some errors:
+In SMTP, I implement the types of error reporting including the syntax of the command, the existence of the user, and the existence of the receiver's domain server.
+
+Here is some of the important code:
+
+Sender validation:
+
+```python
+			if state == WAITING_MAIL:
+                if len(message) >= 2 and command == 'MAIL' and message[1].startswith('FROM:'):
+                    src = message[1][6:len(message[1]) - 1]
+                    if DEBUG:
+                        print("src: ", src)
+                    from_ip, from_port = analyze_addr(src)
+                    if from_ip == 'localhost' and from_port == SMTP_PORT and src not in ACCOUNTS:
+                        conn.sendall(b'500 Error: no such account\r\n')
+                        continue
+                        
+                    state = WAITING_RCPT
+                    conn.sendall(b'250 OK\r\n')
+                else:
+                    conn.sendall(b'500 Error: you should send a legal MAIL command\r\n')
+                    continue
+```
+
+Receiver validation:
+
+```python
+			if state == WAITING_RCPT:
+                if len(message) >= 2 and command == 'RCPT' and message[1].startswith('TO:'):
+                    dst = message[1][4:len(message[1]) - 1]
+                    if DEBUG:
+                        print("dst: ", dst)
+                        
+                    if src not in ACCOUNTS and dst not in ACCOUNTS:
+                        conn.sendall(b'500 Error: wrong message\r\n')
+                        state = WAITING_MAIL
+                        continue
+                    temp_domain = dst.split('@')[-1] + '.'
+                    if temp_domain not in FDNS['MX']:
+                        conn.sendall(b'500 Error: unknown domain\r\n')
+                        state = WAITING_MAIL
+                        continue
+
+                    state = WAITING_DATA
+                    conn.sendall(b'250 OK\r\n')
+                else:
+                    conn.sendall(b'500 Error: you should send a legal RCPT command\r\n')
+                    continue
+```
+
+Here is the test for some errors:
 
 ![smtp_err](C:\Users\ASUS\Desktop\materials\Network\assignments\png_save\smtp_err.png)
 

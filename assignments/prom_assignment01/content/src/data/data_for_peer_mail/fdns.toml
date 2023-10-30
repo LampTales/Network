@@ -1,0 +1,21 @@
+[MX]
+"mail.sustech.edu.cn." = "mxbiz1.qq.com."
+"gmail.com." = "gmail-smtp-in.l.google.com."
+"lamptales.com." = "mail.lamptales.com."
+"haoson.com." = "mail.haoson.com."
+
+[P]
+"pop.exmail.qq.com." = "3110"
+"smtp.exmail.qq.com." = "1025"
+"mxbiz1.qq.com." = "1025"
+"pop.gmail.com." = "2110"
+"smtp.gmail.com." = "2025"
+"gmail-smtp-in.l.google.com." = "2025"
+"pop.lamptales.com." = "3026"
+"smtp.lamptales.com." = "3025"
+"mail.lamptales.com." = "3025"
+"mail.haoson.com." = "3025"
+
+[A]
+"mail.haoson.com." = "10.25.164.49"
+

@@ -264,7 +264,10 @@ class SMTPServer(BaseRequestHandler):
                     if to_ip == 'localhost' and to_port == SMTP_PORT:
                         if DEBUG:
                             print("send to the server itself")
-                        MAILBOXES[dst].append(data)
+                        if dst in MAILBOXES:
+                            MAILBOXES[dst].append(data)
+                        elif src in MAILBOXES:
+                            MAILBOXES[src].append(data)
                     else:
                         if DEBUG:
                             print("send to other server")
@@ -295,7 +298,6 @@ class SMTPServer(BaseRequestHandler):
                     if DEBUG:
                         print("dst: ", dst)
 
-                    # verify user and password
                     if src not in ACCOUNTS and dst not in ACCOUNTS:
                         conn.sendall(b'500 Error: wrong message\r\n')
                         state = WAITING_MAIL
